@@ -61,6 +61,22 @@ open "$HOME/Applications/Pi Sessions.app"
 Reopening shows the panel even when its status item is offscreen. Hold Command
 and drag the menu icon to reposition it when visible.
 
+## Notifications
+
+Enable completion and attention notifications separately in **Settings → Notifications**.
+Sessions that keep waiting for input or confirmation repeat their notification every
+**10 minutes** by default. Toggle **Repeat while attention is needed** or set
+**Remind every** to 1–1440 minutes. Changes are saved immediately.
+
+Reminders stop when the prompt clears or the session exits. Opening or dismissing
+a notification does not resolve the prompt. Reminders respect **Silence the session
+I'm viewing**, sound, and preview settings, and replace the previous notification
+instead of accumulating. macOS notification permission and Focus settings still apply.
+
+Pi Sessions must remain running. Checks run every 15 seconds; restart, re-enabling
+reminders, or changing the interval starts a fresh countdown. Waking from sleep
+does not replay missed intervals.
+
 ## State and focus
 
 The extension publishes lifecycle events, not transcript polling. Completion uses

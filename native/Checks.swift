@@ -23,6 +23,7 @@ func demoSessions() -> [Session] {
 func runSelfTests() {
     checkStatusIcons()
     checkUnreadRows()
+    checkAttentionReminders()
     checkKeyboardSelection()
     do {
         let samples = demoSessions()
@@ -88,8 +89,56 @@ func runSelfTests() {
         try Data("broken".utf8).write(to: dir.appendingPathComponent("1234.json"))
         let scanned = try scanSessions(at: dir)
         precondition(scanned == [current], "corrupt state must not hide valid sessions")
-        print("Passed: icon rendering/preferences, tabs/search, keyboard selection, focus plans, PID identity, corrupt state isolation, notification deduplication/baseline/aborts, unread state, local URLs, snapshot round-trip")
+        print("Passed: icon rendering/preferences, tabs/search, keyboard selection, focus plans, PID identity, corrupt state isolation, notification deduplication/baseline/aborts, attention reminders, unread state, local URLs, snapshot round-trip")
     } catch { fputs("Self-test failed: \(error)\n", stderr); exit(1) }
+}
+
+private func checkAttentionReminders() {
+    let domain = "local.pi.sessions.tests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: domain)!
+    defer { defaults.removePersistentDomain(forName: domain) }
+    let preferences = Preferences(defaults: defaults, resolveLoginStatus: false)
+    precondition(preferences.repeatAttention && preferences.attentionReminderMinutes == 10)
+    preferences.attentionReminderMinutes = 7
+    preferences.repeatAttention = false
+    let restored = Preferences(defaults: defaults, resolveLoginStatus: false)
+    precondition(!restored.repeatAttention && restored.attentionReminderMinutes == 7)
+    preferences.attentionReminderMinutes = 0
+    precondition(preferences.attentionReminderMinutes == 1 && defaults.integer(forKey: "attentionReminderMinutes") == 1)
+    preferences.attentionReminderMinutes = 1441
+    precondition(preferences.attentionReminderMinutes == 1440 && defaults.integer(forKey: "attentionReminderMinutes") == 1440)
+    defaults.set(-1, forKey: "attentionReminderMinutes")
+    precondition(Preferences(defaults: defaults, resolveLoginStatus: false).attentionReminderMinutes == 10)
+
+    let samples = demoSessions()
+    var first = samples[0], second = samples[1]
+    first.attention = .init(id: "prompt-a", at: -1, title: "Approve?")
+    second.attention = .init(id: "prompt-b", at: 300_000, title: "Choose?")
+    let interval = 600_000.0
+    var schedule = AttentionReminderSchedule()
+    precondition(schedule.due([first, samples[2], samples[10]], now: 0, interval: interval, enabled: true).isEmpty, "startup establishes a baseline without replaying old prompts")
+    precondition(schedule.due([first, second], now: 300_000, interval: interval, enabled: true).isEmpty)
+    precondition(schedule.due([first, second], now: 599_999, interval: interval, enabled: true).isEmpty)
+    precondition(schedule.due([first, second], now: 600_000, interval: interval, enabled: true).map { $0.0.id } == [first.id])
+    precondition(schedule.due([first, second], now: 600_001, interval: interval, enabled: true).isEmpty, "file events must not duplicate reminders")
+    precondition(schedule.due([first, second], now: 900_000, interval: interval, enabled: true).map { $0.0.id } == [second.id], "each session has its own clock")
+    precondition(schedule.due([first, second], now: 900_001, interval: interval, enabled: false).isEmpty)
+    precondition(schedule.due([first, second], now: 900_002, interval: interval, enabled: true).isEmpty)
+    precondition(schedule.due([first, second], now: 1_500_001, interval: interval, enabled: true).isEmpty)
+    precondition(schedule.due([first, second], now: 1_500_002, interval: interval, enabled: true).count == 2)
+    precondition(schedule.due([first, second], now: 1_500_003, interval: 120_000, enabled: true).isEmpty, "interval edits start a new countdown")
+    precondition(schedule.due([first, second], now: 1_620_003, interval: 120_000, enabled: true).count == 2)
+    precondition(schedule.due([first, second], now: 9_000_000, interval: 120_000, enabled: true).count == 2, "wake from sleep sends at most one reminder per session")
+    precondition(schedule.due([first, second], now: 9_000_001, interval: 120_000, enabled: true).isEmpty)
+
+    first.attention = .init(id: "new-prompt", at: 9_100_000, title: "New question")
+    second.exitedAt = 9_100_000
+    precondition(schedule.due([first, second], now: 9_120_000, interval: 120_000, enabled: true).isEmpty, "new prompts reset the clock and exited sessions stop reminding")
+    precondition(schedule.due([samples[2], samples[10]], now: 9_240_000, interval: 120_000, enabled: true).isEmpty, "busy and idle sessions do not repeat")
+    precondition(schedule.due([first], now: 9_360_000, interval: 120_000, enabled: true).isEmpty, "a departed prompt must lose its timer")
+    precondition(schedule.due([first], now: 9_480_000, interval: 120_000, enabled: true).count == 1)
+    precondition(schedule.due([first], now: 0, interval: 120_000, enabled: true).isEmpty, "clock rollback resets the baseline")
+    precondition(schedule.due([first], now: 120_000, interval: 120_000, enabled: true).count == 1)
 }
 
 private func checkKeyboardSelection() {

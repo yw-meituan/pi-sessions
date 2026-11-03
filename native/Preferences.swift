@@ -17,6 +17,14 @@ final class Preferences: ObservableObject {
     var onChange: (() -> Void)?
     @Published var completion: Bool { didSet { changed("notifyCompletion", completion) } }
     @Published var attention: Bool { didSet { changed("notifyAttention", attention) } }
+    @Published var repeatAttention: Bool { didSet { changed("repeatAttention", repeatAttention) } }
+    @Published var attentionReminderMinutes: Int {
+        didSet {
+            let clamped = min(max(attentionReminderMinutes, 1), 1440)
+            if attentionReminderMinutes != clamped { attentionReminderMinutes = clamped; return }
+            changed("attentionReminderMinutes", attentionReminderMinutes)
+        }
+    }
     @Published var sound: Bool { didSet { changed("notificationSound", sound) } }
     @Published var preview: Bool { didSet { changed("notificationPreview", preview) } }
     @Published var suppressCurrent: Bool { didSet { changed("suppressCurrent", suppressCurrent) } }
@@ -31,8 +39,12 @@ final class Preferences: ObservableObject {
         self.persistChanges = persistChanges
         defaults.register(defaults: ["notifyCompletion": true, "notifyAttention": true, "notificationSound": false,
             "notificationPreview": true, "suppressCurrent": true, "showExited": false, "statusIndicator": true,
-            "globalShortcut": "option-command-p", "statusIcon": StatusIconStyle.official.rawValue])
+            "globalShortcut": "option-command-p", "statusIcon": StatusIconStyle.official.rawValue,
+            "repeatAttention": true, "attentionReminderMinutes": 10])
         completion = defaults.bool(forKey: "notifyCompletion"); attention = defaults.bool(forKey: "notifyAttention")
+        repeatAttention = defaults.bool(forKey: "repeatAttention")
+        let minutes = defaults.integer(forKey: "attentionReminderMinutes")
+        attentionReminderMinutes = (1...1440).contains(minutes) ? minutes : 10
         sound = defaults.bool(forKey: "notificationSound"); preview = defaults.bool(forKey: "notificationPreview")
         suppressCurrent = defaults.bool(forKey: "suppressCurrent"); showExited = defaults.bool(forKey: "showExited")
         indicator = defaults.bool(forKey: "statusIndicator"); shortcut = defaults.string(forKey: "globalShortcut") ?? "off"

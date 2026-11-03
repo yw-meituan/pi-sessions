@@ -36,6 +36,7 @@ final class SessionStore: ObservableObject {
     private var ownerStart = ""
     private var canPersist = false
     private var reconciledDelivered = false
+    private var attentionReminders = AttentionReminderSchedule()
     private var cachedLive: [Session]?
     private struct RowsSnapshot {
         let tab: SessionTab
@@ -121,6 +122,7 @@ final class SessionStore: ObservableObject {
     func preferencesChanged() {
         objectWillChange.send()
         notifications?.reconcile(sessions, preferences: preferences)
+        remindAttention(at: Date().timeIntervalSince1970 * 1000)
         writeOwner(); onChange?()
     }
     private func writeOwner() {
@@ -201,9 +203,18 @@ final class SessionStore: ObservableObject {
             }
         }
         if changed { persist() }
+        remindAttention(at: now.timeIntervalSince1970 * 1000)
         onChange?()
     }
-    private func dispatchNotification(_ session: Session, event: NotificationEvent) {
+    private func remindAttention(at time: Double) {
+        let reminders = attentionReminders.due(sessions, now: time,
+            interval: Double(preferences.attentionReminderMinutes) * 60_000,
+            enabled: preferences.attention && preferences.repeatAttention && notifications?.authorized == true)
+        for (session, event) in reminders {
+            dispatchNotification(session, event: event, reminderInterval: preferences.attentionReminderMinutes)
+        }
+    }
+    private func dispatchNotification(_ session: Session, event: NotificationEvent, reminderInterval: Int? = nil) {
         let checkCurrent = preferences.suppressCurrent && NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.googlecode.iterm2"
         let live = liveSessions
         focusQueue.async { [weak self] in
@@ -212,8 +223,11 @@ final class SessionStore: ObservableObject {
                 guard let self, let latest = self.sessions.first(where: { $0.runtimeId == session.runtimeId }),
                       notificationEvents(latest).contains(where: { $0.id == event.id }),
                       (event.kind == "attention" ? self.preferences.attention : self.preferences.completion) else { return }
+                if let reminderInterval {
+                    guard self.preferences.repeatAttention, self.preferences.attentionReminderMinutes == reminderInterval else { return }
+                }
                 if current == session.runtimeId { self.markRead(latest); return }
-                self.notifications?.post(latest, event: event, preferences: self.preferences)
+                self.notifications?.post(latest, event: event, preferences: self.preferences, reminder: reminderInterval != nil)
             }
         }
     }

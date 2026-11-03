@@ -24,6 +24,40 @@ func isFreshNotificationEvent(_ event: NotificationEvent, launchedAt: Double, wa
     event.at > launchedAt && !wasSeen
 }
 
+struct AttentionReminderSchedule {
+    private struct Entry {
+        let eventID: String
+        var lastAttemptAt: Double
+    }
+    private var entries: [String: Entry] = [:]
+    private var interval: Double?
+
+    // All times are milliseconds. Reserve each attempt before asynchronous focus checks.
+    mutating func due(_ sessions: [Session], now: Double, interval: Double, enabled: Bool) -> [(Session, NotificationEvent)] {
+        guard enabled, interval.isFinite, interval > 0 else {
+            entries.removeAll(); self.interval = nil
+            return []
+        }
+        if self.interval != interval { entries.removeAll(); self.interval = interval }
+        var active: [String: Entry] = [:]
+        var reminders: [(Session, NotificationEvent)] = []
+        for session in sessions {
+            guard let event = notificationEvents(session).first(where: { $0.kind == "attention" }) else { continue }
+            var entry = entries[session.runtimeId] ?? Entry(eventID: event.id, lastAttemptAt: now)
+            if entry.eventID != event.id || now < entry.lastAttemptAt {
+                entry = Entry(eventID: event.id, lastAttemptAt: now)
+            }
+            if now - entry.lastAttemptAt >= interval {
+                reminders.append((session, event))
+                entry.lastAttemptAt = now
+            }
+            active[session.runtimeId] = entry
+        }
+        entries = active
+        return reminders
+    }
+}
+
 final class SessionNotifications: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
     @Published var permission = "Not requested"
     @Published var authorized = false
@@ -92,10 +126,10 @@ final class SessionNotifications: NSObject, ObservableObject, UNUserNotification
                       !notificationEvents(session).contains(where: { $0.id == previous }) { clear(session) }
         }
     }
-    func post(_ session: Session, event: NotificationEvent, preferences: Preferences, test: Bool = false) {
+    func post(_ session: Session, event: NotificationEvent, preferences: Preferences, test: Bool = false, reminder: Bool = false) {
         guard authorized else { return }
         let content = UNMutableNotificationContent()
-        let heading = event.kind == "attention" ? "Needs your attention" : session.lastSettled?.outcome == "error" ? "Run failed" : "Completed"
+        let heading = event.kind == "attention" ? (reminder ? "Still needs your attention" : "Needs your attention") : session.lastSettled?.outcome == "error" ? "Run failed" : "Completed"
         content.title = test ? "Pi Sessions notification test" : "\(session.project) · \(heading)"
         content.subtitle = String(session.title.prefix(100))
         content.body = preferences.preview ? String((event.kind == "attention" ? session.attention?.title ?? session.activity : session.lastReply ?? session.displayActivity).prefix(220)) : "Click to open the session in iTerm2."

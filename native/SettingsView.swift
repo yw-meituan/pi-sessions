@@ -46,6 +46,20 @@ struct SettingsView: View {
                         VStack(alignment: .leading, spacing: 9) {
                             Toggle("When a run completes or fails", isOn: $preferences.completion)
                             Toggle("When input or confirmation is needed", isOn: $preferences.attention)
+                            VStack(alignment: .leading, spacing: 6) {
+                                Toggle("Repeat while attention is needed", isOn: $preferences.repeatAttention)
+                                HStack {
+                                    Text("Remind every")
+                                    TextField("Minutes", value: $preferences.attentionReminderMinutes, format: .number.grouping(.never))
+                                        .frame(width: 56).textFieldStyle(.roundedBorder)
+                                        .accessibilityLabel("Attention reminder interval in minutes")
+                                    Text("minutes")
+                                    Stepper("Reminder interval", value: $preferences.attentionReminderMinutes, in: 1...1440)
+                                        .labelsHidden()
+                                }.disabled(!preferences.repeatAttention)
+                                Text("1–1440 minutes. Stops when the session no longer needs attention. Requires Pi Sessions to be running.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }.padding(.leading, 18).disabled(!preferences.attention)
                             Toggle("Play a sound", isOn: $preferences.sound)
                             Toggle("Include reply / prompt previews", isOn: $preferences.preview)
                             Toggle("Silence the session I'm viewing", isOn: $preferences.suppressCurrent)
