@@ -27,6 +27,7 @@ func runSelfTests() {
     checkKeyboardSelection()
     do {
         let samples = demoSessions()
+        try checkTmuxZoom()
         precondition(filteredSessions(samples, tab: .attention, query: "").count == 2)
         precondition(filteredSessions(samples, tab: .busy, query: "").count == 8)
         precondition(filteredSessions(samples, tab: .idle, query: "").count == 14)
@@ -35,16 +36,16 @@ func runSelfTests() {
         let clients = [TmuxClient(tty: "/dev/ttys1", session: "$1", activity: 1),
                        TmuxClient(tty: "/dev/ttys2", session: "$2", activity: 2),
                        TmuxClient(tty: "/dev/ttys3", session: "$1", activity: 3)]
-        let plan = try makeFocusPlan(socket: "/tmp/test-socket", pane: "%7", location: ["$1", "@3", "%7", "1"],
+        let plan = try makeFocusPlan(socket: "/tmp/test-socket", pane: "%7", location: ["$1", "@3", "%7"],
             clients: clients, terminalTTYs: ["/dev/ttys1", "/dev/ttys2"])
         precondition(plan.terminalTTY == "/dev/ttys1")
-        precondition(plan.commands.contains("resize-pane"))
+        precondition(plan.commands == ["select-window", "-t", "$1:@3", ";", "select-pane", "-Z", "-t", "%7"])
         precondition(!plan.commands.contains("switch-client"))
-        let detached = try makeFocusPlan(socket: "/tmp/test-socket", pane: "%7", location: ["$9", "@4", "%7", "0"],
+        let detached = try makeFocusPlan(socket: "/tmp/test-socket", pane: "%7", location: ["$9", "@4", "%7"],
             clients: clients, terminalTTYs: ["/dev/ttys1", "/dev/ttys2"])
         precondition(detached.terminalTTY == "/dev/ttys2")
         precondition(detached.commands.suffix(6) == [";", "switch-client", "-c", "/dev/ttys2", "-t", "$9"])
-        precondition((try? makeFocusPlan(socket: "/tmp/test-socket", pane: "%7", location: ["$1", "@3", "%8", "0"],
+        precondition((try? makeFocusPlan(socket: "/tmp/test-socket", pane: "%7", location: ["$1", "@3", "%8"],
             clients: clients, terminalTTYs: ["/dev/ttys1"])) == nil)
 
         let start = try runProcess("/bin/ps", ["-p", String(getpid()), "-o", "lstart="])
@@ -229,4 +230,45 @@ private func checkStatusIcons() {
             }, "icon must not be blank: \(style)")
         }
     }
+}
+
+private func checkTmuxZoom() throws {
+    let focus = TerminalFocus()
+    guard FileManager.default.isExecutableFile(atPath: focus.tmuxExecutable) else { return }
+    let directory = ProcessInfo.processInfo.environment["CLAUDE_TMUX_SOCKET_DIR"]
+        ?? FileManager.default.temporaryDirectory.appendingPathComponent("claude-tmux-sockets").path
+    try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+    let socket = "\(directory)/pi-\(UUID().uuidString.prefix(8)).sock"
+    func tmux(_ args: [String]) throws -> String { try focus.tmux(socket, args) }
+    defer { _ = try? tmux(["kill-server"]) }
+    let format = "#{session_id}\t#{window_id}\t#{pane_id}"
+    let location = try tmux(["-f", "/dev/null", "new-session", "-d", "-s", "focus-test", "-x", "80", "-y", "24",
+                             "-P", "-F", format, "/bin/cat"]).components(separatedBy: "\t")
+    print("Isolated tmux test: tmux -S '\(socket)' attach -t focus-test (removed after tests)")
+    let session = location[0], window = location[1], first = location[2]
+    let second = try tmux(["split-window", "-d", "-t", first, "-P", "-F", "#{pane_id}", "/bin/cat"])
+    func select(_ pane: String) throws {
+        let info = try tmux(["display-message", "-p", "-t", pane, format]).components(separatedBy: "\t")
+        let plan = try makeFocusPlan(socket: socket, pane: pane, location: info,
+            clients: [TmuxClient(tty: "/dev/test", session: session, activity: 0)], terminalTTYs: ["/dev/test"])
+        _ = try tmux(plan.commands)
+    }
+    func expect(_ pane: String, zoom: Bool) throws {
+        let actual = try tmux(["display-message", "-p", "-t", session, "#{pane_id}\t#{window_zoomed_flag}"])
+        guard actual == "\(pane)\t\(zoom ? 1 : 0)" else { throw PanelError("Unexpected tmux focus: \(actual)") }
+    }
+    _ = try tmux(["resize-pane", "-Z", "-t", first])
+    try select(first); try expect(first, zoom: true)
+    try select(first); try expect(first, zoom: true)
+    try select(second); try expect(second, zoom: true)
+    _ = try tmux(["resize-pane", "-Z", "-t", second])
+    try select(first); try expect(first, zoom: false)
+    try select(second); try expect(second, zoom: false)
+    _ = try tmux(["resize-pane", "-Z", "-t", second])
+    let other = try tmux(["new-window", "-t", session, "-P", "-F", "#{pane_id}", "/bin/cat"])
+    try select(other); try expect(other, zoom: false)
+    try select(first); try expect(first, zoom: true)
+    let selectedWindow = try tmux(["display-message", "-p", "-t", session, "#{window_id}"])
+    guard selectedWindow == window else { throw PanelError("Focus selected the wrong tmux window") }
+    print("Passed: tmux zoom preservation (same pane, hidden pane, repeated focus, unzoomed, cross-window)")
 }

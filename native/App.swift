@@ -1,4 +1,5 @@
 import AppKit
+import CoreGraphics
 import SwiftUI
 import UserNotifications
 
@@ -66,7 +67,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         statusItem = item
         store.onChange = { [weak self] in self?.updateStatus() }
         hotKey = PanelHotKey()
-        hotKey?.onPress = { [weak self] in self?.togglePanel() }
+        hotKey?.onPress = { [weak self] in
+            guard let self else { return }
+            if self.panel.isVisible { self.hidePanel() } else { self.showPanel(moveCursor: true) }
+        }
         store.preferences.onChange = { [weak self] in
             self?.store.preferencesChanged(); self?.configureShortcut()
         }
@@ -102,7 +106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc func togglePanel() { panel.isVisible ? hidePanel() : showPanel() }
 
-    func showPanel() {
+    func showPanel(moveCursor: Bool = false) {
         if !panel.isVisible { store.observeCurrent(wasITerm: NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.googlecode.iterm2") }
         if renderPath == nil { store.refresh() }
         let mouse = NSEvent.mouseLocation
@@ -121,6 +125,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.setFrame(frame, display: true)
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
+        if moveCursor, let primary = NSScreen.screens.first {
+            // AppKit uses bottom-left; Quartz uses the primary display's top-left.
+            CGWarpMouseCursorPosition(CGPoint(x: panel.frame.midX, y: primary.frame.maxY - panel.frame.midY))
+        }
         NotificationCenter.default.post(name: .init("PiSessionsFocusSearch"), object: nil)
         if outsideClick == nil {
             outsideClick = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in

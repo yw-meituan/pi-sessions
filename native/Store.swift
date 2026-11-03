@@ -28,6 +28,8 @@ final class SessionStore: ObservableObject {
     private let launchedAt = Date().timeIntervalSince1970 * 1000
     private let queue = DispatchQueue(label: "pi.sessions.scan", qos: .utility)
     private let focusQueue = DispatchQueue(label: "pi.sessions.focus", qos: .userInitiated)
+    private let observationQueue = DispatchQueue(label: "pi.sessions.observation", qos: .utility)
+    private var focusGeneration = 0
     private var watchers: [DispatchSourceFileSystemObject] = []
     private var timer: DispatchSourceTimer?
     private var pending: DispatchWorkItem?
@@ -217,7 +219,7 @@ final class SessionStore: ObservableObject {
     private func dispatchNotification(_ session: Session, event: NotificationEvent, reminderInterval: Int? = nil) {
         let checkCurrent = preferences.suppressCurrent && NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.googlecode.iterm2"
         let live = liveSessions
-        focusQueue.async { [weak self] in
+        observationQueue.async { [weak self] in
             let current = checkCurrent ? TerminalFocus().visibleSessionID(live) : nil
             DispatchQueue.main.async {
                 guard let self, let latest = self.sessions.first(where: { $0.runtimeId == session.runtimeId }),
@@ -235,15 +237,20 @@ final class SessionStore: ObservableObject {
         currentRuntimeID = nil
         guard wasITerm else { return }
         let live = liveSessions
-        focusQueue.async { [weak self] in
+        let generation = focusGeneration
+        observationQueue.async { [weak self] in
             let current = TerminalFocus().visibleSessionID(live)
-            DispatchQueue.main.async { self?.currentRuntimeID = current }
+            DispatchQueue.main.async {
+                guard let self, self.focusGeneration == generation else { return }
+                self.currentRuntimeID = current
+            }
         }
     }
     func focus(_ session: Session) {
         guard !focusing else { return }
         if session.exitedAt != nil { error = "This session has exited. Right-click to copy its resume command."; onFocusFailure?(); return }
         focusing = true; error = nil
+        focusGeneration += 1
         focusQueue.async { [weak self] in
             var message: String?
             do { try TerminalFocus().focus(session) } catch { message = error.localizedDescription }

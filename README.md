@@ -50,6 +50,7 @@ using a build-local VFS overlay. It does not modify system development tools.
 - The chosen tab is remembered; state changes never force-switch tabs.
 - With search focused, use **↑ / ↓** to select a live session and **Return** to open it; the highlight scrolls into view. Search/filter changes select the first match; background updates preserve the selected session. Arrow keys leave input-method composition and modified text-editing shortcuts alone.
 - Click a row to jump; click outside or press Escape to close.
+- Opening with the global shortcut moves the pointer to the panel center. Closing or opening by mouse leaves it in place.
 - `…` opens the state directory or quits the app.
 
 If macOS hides the menu icon behind the notch, open the app through Spotlight or:
@@ -91,9 +92,13 @@ Reload/new/resume/fork replaces the runtime ID, invalidating old clicks.
 
 On click, the app rechecks identity, resolves the pane's current tmux
 session/window/client and matches client TTYs to live iTerm2 sessions. It then
-selects the pane and iTerm2 split/tab/window. Zoom is removed so the pane is visible.
+selects the pane and iTerm2 split/tab/window, preserving tmux zoom. In a zoomed
+window, selecting another pane shows that pane zoomed; unzoomed windows stay unzoomed.
 No inherited `ITERM_SESSION_ID` is trusted. No shell startup or Node process is
 needed for a click; tmux and AppleScript commands run on a background queue.
+Pane/client lookup uses one tmux call; iTerm2 TTYs are read in batches.
+Background visibility checks deduplicate by socket and run on a separate queue,
+so clicks do not wait behind them.
 
 Prefer a client already attached to the target, otherwise the most recently
 active iTerm2 client. A detached session uses that existing client; if there is no

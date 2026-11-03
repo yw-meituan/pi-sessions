@@ -13,14 +13,13 @@ func hasID(_ value: String, prefix: Character) -> Bool {
 }
 
 func makeFocusPlan(socket: String, pane: String, location: [String], clients: [TmuxClient], terminalTTYs: [String]) throws -> FocusPlan {
-    guard location.count == 4, hasID(location[0], prefix: "$"), hasID(location[1], prefix: "@"),
+    guard location.count == 3, hasID(location[0], prefix: "$"), hasID(location[1], prefix: "@"),
           hasID(pane, prefix: "%"), location[2] == pane else { throw PanelError("The tmux pane no longer exists") }
     let session = location[0], window = location[1]
     guard let client = chooseClient(clients, session: session, terminalTTYs: terminalTTYs) else {
         throw PanelError("No available iTerm2 tmux client. Attach tmux in iTerm2 first.")
     }
-    var commands = ["select-window", "-t", "\(session):\(window)", ";", "select-pane", "-t", pane]
-    if location[3] == "1" { commands += [";", "resize-pane", "-Z", "-t", pane] }
+    var commands = ["select-window", "-t", "\(session):\(window)", ";", "select-pane", "-Z", "-t", pane]
     if client.session != session { commands += [";", "switch-client", "-c", client.tty, "-t", session] }
     return FocusPlan(socket: socket, commands: commands, terminalTTY: client.tty)
 }
@@ -33,16 +32,18 @@ struct TerminalFocus {
               AEDeterminePermissionToAutomateTarget(descriptor, typeWildCard, typeWildCard, false) == noErr,
               let script = Bundle.main.url(forResource: "iterm", withExtension: "applescript"),
               let tty = try? runProcess("/usr/bin/osascript", [script.path, "current"], timeout: 3), !tty.isEmpty else { return nil }
-        for session in sessions where session.exitedAt == nil {
-            if let location = session.tmux {
-                let clients = (try? tmux(location.socket, ["list-clients", "-F", "#{client_tty}\t#{session_id}"])) ?? ""
-                let target = clients.split(separator: "\n").map { $0.components(separatedBy: "\t") }
-                    .first { $0.count == 2 && $0[0] == tty }?[1]
-                if let target, hasID(target, prefix: "$"),
-                   (try? tmux(location.socket, ["display-message", "-p", "-t", target, "#{pane_id}"])) == location.pane {
-                    return session.runtimeId
-                }
-            } else if session.tty == tty { return session.runtimeId }
+        let live = sessions.filter { $0.exitedAt == nil }
+        if let direct = live.first(where: { $0.tmux == nil && $0.tty == tty }) { return direct.runtimeId }
+        var checkedSockets = Set<String>()
+        for session in live {
+            guard let location = session.tmux, checkedSockets.insert(location.socket).inserted else { continue }
+            let clients = (try? tmux(location.socket, ["list-clients", "-F", "#{client_tty}\t#{session_id}"])) ?? ""
+            let target = clients.split(separator: "\n").map { $0.components(separatedBy: "\t") }
+                .first { $0.count == 2 && $0[0] == tty }?[1]
+            if let target, hasID(target, prefix: "$"),
+               let pane = try? tmux(location.socket, ["display-message", "-p", "-t", target, "#{pane_id}"]) {
+                return live.first { $0.tmux?.socket == location.socket && $0.tmux?.pane == pane }?.runtimeId
+            }
         }
         return nil
     }
@@ -79,14 +80,16 @@ struct TerminalFocus {
             return FocusPlan(socket: nil, commands: [], terminalTTY: tty)
         }
         guard location.socket.hasPrefix("/"), hasID(location.pane, prefix: "%") else { throw PanelError("Invalid tmux location") }
-        let paneInfo = try tmux(location.socket, ["display-message", "-p", "-t", location.pane,
-            "#{session_id}\t#{window_id}\t#{pane_id}\t#{window_zoomed_flag}"]).components(separatedBy: "\t")
-        let clients = try tmux(location.socket, ["list-clients", "-F", "#{client_tty}\t#{session_id}\t#{client_activity}"])
-            .split(separator: "\n").compactMap { line -> TmuxClient? in
-                let parts = line.split(separator: "\t").map(String.init)
-                guard parts.count == 3 else { return nil }
-                return TmuxClient(tty: parts[0], session: parts[1], activity: Double(parts[2]) ?? 0)
-            }
+        let rows = try tmux(location.socket, ["display-message", "-p", "-t", location.pane,
+            "#{session_id}\t#{window_id}\t#{pane_id}", ";",
+            "list-clients", "-F", "#{client_tty}\t#{session_id}\t#{client_activity}"])
+            .split(separator: "\n")
+        let paneInfo = rows.first?.components(separatedBy: "\t") ?? []
+        let clients = rows.dropFirst().compactMap { line -> TmuxClient? in
+            let parts = line.split(separator: "\t").map(String.init)
+            guard parts.count == 3 else { return nil }
+            return TmuxClient(tty: parts[0], session: parts[1], activity: Double(parts[2]) ?? 0)
+        }
         let terminals = try iterm(["list"]).components(separatedBy: "\n")
         return try makeFocusPlan(socket: location.socket, pane: location.pane, location: paneInfo, clients: clients, terminalTTYs: terminals)
     }
