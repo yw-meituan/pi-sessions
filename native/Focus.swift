@@ -51,7 +51,8 @@ struct TerminalFocus {
         ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux"].first { FileManager.default.isExecutableFile(atPath: $0) } ?? "/opt/homebrew/bin/tmux"
     }
     func tmux(_ socket: String, _ args: [String]) throws -> String {
-        try runProcess(tmuxExecutable, ["-S", socket] + args)
+        // Preserve tab-separated fields even when launched without a terminal or UTF-8 locale.
+        try runProcess(tmuxExecutable, ["-u", "-S", socket] + args)
     }
     func iterm(_ args: [String]) throws -> String {
         guard let script = Bundle.main.url(forResource: "iterm", withExtension: "applescript") else {

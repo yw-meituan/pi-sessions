@@ -33,5 +33,6 @@ cp "$ROOT/assets/icons/"*.png "$APP/Contents/Resources/icons/"
 cp "$ROOT/assets/licenses/"*.txt "$APP/Contents/Resources/icon-licenses/"
 codesign --force --sign - --identifier local.pi.sessions \
   --requirements '=designated => identifier "local.pi.sessions"' "$APP"
-"$APP/Contents/MacOS/PiSessions" --self-test
+# Match desktop launches: no terminal or UTF-8 locale hints for tmux.
+env -u TMUX -u TMUX_PANE -u TERM -u LANG -u LC_CTYPE LC_ALL=C "$APP/Contents/MacOS/PiSessions" --self-test
 printf '%s\n' "$APP"

@@ -245,6 +245,7 @@ private func checkTmuxZoom() throws {
     let location = try tmux(["-f", "/dev/null", "new-session", "-d", "-s", "focus-test", "-x", "80", "-y", "24",
                              "-P", "-F", format, "/bin/cat"]).components(separatedBy: "\t")
     print("Isolated tmux test: tmux -S '\(socket)' attach -t focus-test (removed after tests)")
+    guard location.count == 3 else { throw PanelError("Unexpected tmux location fields: \(location)") }
     let session = location[0], window = location[1], first = location[2]
     let second = try tmux(["split-window", "-d", "-t", first, "-P", "-F", "#{pane_id}", "/bin/cat"])
     func select(_ pane: String) throws {
